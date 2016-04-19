@@ -56,6 +56,59 @@ void VisualContextAnnotator::detectWithCascadeClassifier(vector<Rect>& result, M
 	cascade_classifier.detectMultiScale(frame_gray, result, 1.1, 3, 0, Size(50, 50), Size());
 }
 
+void VisualContextAnnotator::detectTextMorphologicalGradient(vector<Rect>& result, Mat & frame_gray)
+{
+/**http://stackoverflow.com/questions/23506105/extracting-text-opencv**/
+
+	{
+		// morphological gradient
+		Mat grad;
+		Mat morphKernel = getStructuringElement(MORPH_ELLIPSE, Size(3, 3));
+
+
+
+
+		morphologyEx(frame_gray, grad, MORPH_GRADIENT, morphKernel);
+		// binarize
+		Mat bw;
+		threshold(grad, bw, 0.0, 255.0, THRESH_BINARY | THRESH_OTSU);
+		// connect horizontally oriented regions
+		Mat connected;
+		morphKernel = getStructuringElement(MORPH_RECT, Size(9, 1));
+		morphologyEx(bw, connected, MORPH_CLOSE, morphKernel);
+		// find contours
+		Mat mask = Mat::zeros(bw.size(), CV_8UC1);
+		vector<vector<Point>> contours;
+		vector<Vec4i> hierarchy;
+		findContours(connected, contours, hierarchy, CV_RETR_CCOMP, CV_CHAIN_APPROX_SIMPLE, Point(0, 0));
+		if (contours.size() == 0)
+		{
+			return;
+		}
+		// filter contours
+		for (int idx = 0; idx >= 0; idx = hierarchy[idx][0])
+		{
+			Rect rect = boundingRect(contours[idx]);
+			Mat maskROI(mask, rect);
+			maskROI = Scalar(0, 0, 0);
+			// fill the contour
+			drawContours(mask, contours, idx, Scalar(255, 255, 255), CV_FILLED);
+			// ratio of non-zero pixels in the filled region
+			double r = (double)countNonZero(maskROI) / (rect.width*rect.height);
+
+			if (r > .45 /* assume at least 45% of the area is filled if it contains text */
+				&&
+				(rect.height > 8 && rect.width > 8) /* constraints on region size */
+													/* these two conditions alone are not very robust. better to use something
+													like the number of significant peaks in a horizontal projection as a third condition */
+				)
+			{
+				result.push_back(rect);
+			}
+		}
+	}
+}
+
 Annotation VisualContextAnnotator::predictWithLBPInRectangle(const Rect& detect, Mat& frame_gray)
 {
 	Mat face = frame_gray(detect);
@@ -142,6 +195,22 @@ void VisualContextAnnotator::predictWithCAFFE(vector<Annotation>& annotations, c
 	static tbb::affinity_partitioner affinityDNN;
 	vector<Rect> detects;
 	detectWithCascadeClassifier(detects, frame_gray);
+	PredictWithCAFFEBody parallelDNN(*this, detects, frame);
+
+	const int tsize = detects.size();
+
+	parallelDNN.result_ = new Annotation[tsize];
+	vector<Annotation> result(tsize);
+	tbb::parallel_for(tbb::blocked_range<int>(0, tsize), // Index space for loop
+		parallelDNN,                    // Body of loop
+		affinityDNN);
+
+	annotations = vector<Annotation>(parallelDNN.result_, parallelDNN.result_ + tsize);
+}
+
+void VisualContextAnnotator::predictWithCAFFE(vector<Annotation>& annotations, vector<Rect> detects, cv::Mat & frame)
+{
+	static tbb::affinity_partitioner affinityDNN;
 	PredictWithCAFFEBody parallelDNN(*this, detects, frame);
 
 	const int tsize = detects.size();

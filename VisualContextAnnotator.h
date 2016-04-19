@@ -30,9 +30,11 @@ public:
 	void loadLBPModel(const string path);
 	void loadCAFFEModel(const string modelBinPath, const string modelProtoTextPath, const string synthWordPath);
 	void detectWithCascadeClassifier(vector<Rect>& result, Mat& frame_gray);
+	void detectTextMorphologicalGradient(vector<Rect>& result, Mat& frame);
 	Annotation predictWithLBPInRectangle(const Rect & detect, Mat & frame_gray);
 	void predictWithLBP(vector<Annotation>& annotations, cv::Mat & frame_gray);
 	void predictWithCAFFE(vector<Annotation>& annotations, cv::Mat & frame, cv::Mat & frame_gray);
+	void predictWithCAFFE(vector<Annotation>& annotations, vector<Rect> detects, cv::Mat & frame);
 	Annotation predictWithCAFFEInRectangle(const Rect & detect, Mat & frame);
 
 private:
