@@ -32,12 +32,14 @@ public:
 	void detectWithCascadeClassifier(vector<Rect>& result, Mat& frame_gray);
 	Annotation predictWithLBPInRectangle(const Rect & detect, Mat & frame_gray);
 	void predictWithLBP(vector<Annotation>& annotations, cv::Mat & frame_gray);
-	void predictWithCAFFE(Annotation & annotation, cv::Mat & frame);
+	void predictWithCAFFE(vector<Annotation>& annotations, cv::Mat & frame, cv::Mat & frame_gray);
+	Annotation predictWithCAFFEInRectangle(const Rect & detect, Mat & frame);
 
 private:
 	CascadeClassifier cascade_classifier;
 	Ptr<face::FaceRecognizer> model;
 	dnn::Net net;
+	
 	void getMaxClass(dnn::Blob & probBlob, int * classId, double * classProb);
 	std::vector<String> readClassNames(const string filename);
 	std::vector<String> classNames;

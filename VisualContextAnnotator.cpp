@@ -55,15 +55,7 @@ void VisualContextAnnotator::detectWithCascadeClassifier(vector<Rect>& result, M
 {
 	cascade_classifier.detectMultiScale(frame_gray, result, 1.1, 3, 0, Size(50, 50), Size());
 }
-void predictInThreadCAFFE(VisualContextAnnotator& annotator, Annotation& annotation, Mat& frame)
-{
-	annotator.predictWithCAFFE(annotation, frame);
-}
 
-void predictInThreadLBP(Ptr<face::FaceRecognizer> model, Annotation& result, const Rect& detect, Mat& frame_gray)
-{
-
-}
 Annotation VisualContextAnnotator::predictWithLBPInRectangle(const Rect& detect, Mat& frame_gray)
 {
 	Mat face = frame_gray(detect);
@@ -94,6 +86,7 @@ struct PredictWithLBPBody {
 	}
 };
 
+
 void VisualContextAnnotator::predictWithLBP(vector<Annotation>& annotations, cv::Mat& frame_gray)
 {
 	static tbb::affinity_partitioner affinity;
@@ -113,7 +106,7 @@ void VisualContextAnnotator::predictWithLBP(vector<Annotation>& annotations, cv:
 	annotations = vector<Annotation>(parallelLBP.result_, parallelLBP.result_ + tsize);
 }
 
-void VisualContextAnnotator::predictWithCAFFE(Annotation& annotation, cv::Mat & frame)
+Annotation VisualContextAnnotator::predictWithCAFFEInRectangle(const Rect & detect, Mat & frame)
 {
 	Mat img;
 	resize(frame, img, Size(244, 244));
@@ -125,13 +118,45 @@ void VisualContextAnnotator::predictWithCAFFE(Annotation& annotation, cv::Mat & 
 	double classProb;
 	getMaxClass(prob, &classId, &classProb);//find the best class
 
-	// Calculate the position for annotated text (make sure we don't
-	// put illegal values in there):
+											// Calculate the position for annotated text (make sure we don't
+											// put illegal values in there):
 	stringstream caffe_fmt = stringstream();
 	caffe_fmt << "Probability: " << classProb * 100 << "%" << std::endl;
 	caffe_fmt << "Best class: #" << classId << " '" << classNames.at(classId) << "'" << std::endl;
-	annotation.setDescription(caffe_fmt.str());
+	return Annotation(detect, caffe_fmt.str());
 }
+
+struct PredictWithCAFFEBody {
+	VisualContextAnnotator & vca_;
+	vector<Rect> detects_;
+	Mat& frame_gray_;
+	Annotation* result_;
+	PredictWithCAFFEBody(VisualContextAnnotator & u, vector<Rect> detects, Mat& frame_gray) :vca_(u), detects_(detects), frame_gray_(frame_gray) {}
+	void operator()(const tbb::blocked_range<int>& range) const {
+		for (int i = range.begin(); i != range.end(); ++i)
+			result_[i] = vca_.predictWithCAFFEInRectangle(detects_[i], frame_gray_);
+	}
+};
+void VisualContextAnnotator::predictWithCAFFE(vector<Annotation>& annotations, cv::Mat & frame, cv::Mat & frame_gray)
+{
+	static tbb::affinity_partitioner affinityDNN;
+	vector<Rect> detects;
+	detectWithCascadeClassifier(detects, frame_gray);
+	PredictWithCAFFEBody parallelDNN(*this, detects, frame);
+
+	const int tsize = detects.size();
+
+	parallelDNN.result_ = new Annotation[tsize];
+	vector<Annotation> result(tsize);
+	tbb::parallel_for(tbb::blocked_range<int>(0, tsize), // Index space for loop
+		parallelDNN,                    // Body of loop
+		affinityDNN);
+
+	annotations = vector<Annotation>(parallelDNN.result_, parallelDNN.result_ + tsize);
+}
+
+
+
 
 /* Find best class for the blob (i. e. class with maximal probability) */
 void VisualContextAnnotator::getMaxClass(dnn::Blob &probBlob, int *classId, double *classProb)
