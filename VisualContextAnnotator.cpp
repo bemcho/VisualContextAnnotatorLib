@@ -56,7 +56,7 @@ void VisualContextAnnotator::detectWithCascadeClassifier(vector<Rect>& result, M
 	cascade_classifier.detectMultiScale(frame_gray, result, 1.1, 3, 0, minSize, Size());
 }
 
-void VisualContextAnnotator::detectTextWithMorphologicalGradient(vector<Rect>& result, Mat & frame_gray)
+void VisualContextAnnotator::detectWithMorphologicalGradient(vector<Rect>& result, Mat & frame_gray, Size minSize, Size kernelSize)
 {
 	/**http://stackoverflow.com/questions/23506105/extracting-text-opencv**/
 
@@ -74,7 +74,7 @@ void VisualContextAnnotator::detectTextWithMorphologicalGradient(vector<Rect>& r
 		threshold(grad, bw, 0.0, 255.0, THRESH_BINARY | THRESH_OTSU);
 		// connect horizontally oriented regions
 		Mat connected;
-		morphKernel = getStructuringElement(MORPH_RECT, Size(9, 1));
+		morphKernel = getStructuringElement(MORPH_RECT, kernelSize);
 		morphologyEx(bw, connected, MORPH_CLOSE, morphKernel);
 		// find contours
 		Mat mask = Mat::zeros(bw.size(), CV_8UC1);
@@ -98,7 +98,7 @@ void VisualContextAnnotator::detectTextWithMorphologicalGradient(vector<Rect>& r
 
 			if (r > .45 /* assume at least 45% of the area is filled if it contains text */
 				&&
-				(rect.height > 8 && rect.width > 8) /* constraints on region size */
+				(rect.height > minSize.height && rect.width > minSize.width) /* constraints on region size */
 													/* these two conditions alone are not very robust. better to use something
 													like the number of significant peaks in a horizontal projection as a third condition */
 				)
@@ -212,10 +212,10 @@ void VisualContextAnnotator::predictWithLBP(vector<Annotation>& annotations, vec
 Annotation VisualContextAnnotator::predictWithCAFFEInRectangle(const Rect & detect, Mat & frame)
 {
 
-	
+
 	cv::Mat img;
 	img = Scalar::all(0);
-	
+
 	resize(frame(detect), img, Size(244, 244));
 
 	tbb::critical_section cs;

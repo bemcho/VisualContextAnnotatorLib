@@ -28,8 +28,8 @@ public:
 	void loadCascadeClassifier(const string cascadeClassifierPath);
 	void loadLBPModel(const string path);
 	void loadCAFFEModel(const string modelBinPath, const string modelProtoTextPath, const string synthWordPath);
-	void detectWithCascadeClassifier(vector<Rect>& result, Mat& frame_gray, Size minSize = Size(150,150));
-	void detectTextWithMorphologicalGradient(vector<Rect>& result, Mat& frame);
+	void detectWithCascadeClassifier(vector<Rect>& result, Mat& frame_gray, Size minSize = Size(150, 150));
+	void detectWithMorphologicalGradient(vector<Rect>& result, Mat& frame, Size minSize = Size(8, 8), Size kernelSize = Size(9, 1));
 	void detectObjectsWithCanny(vector<Rect>& result, Mat& frame, double lowThreshold, Size minSize = Size(100, 100));
 	Annotation predictWithLBPInRectangle(const Rect & detect, Mat & frame_gray);
 	void predictWithLBP(vector<Annotation>& annotations, cv::Mat & frame_gray);
