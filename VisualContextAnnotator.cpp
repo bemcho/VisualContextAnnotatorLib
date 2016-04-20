@@ -1,6 +1,6 @@
 #include "VisualContextAnnotator.h"
-#include "tbb/blocked_range.h"
-#include "tbb/parallel_for.h"
+
+
 VisualContextAnnotator::VisualContextAnnotator()
 {
 	model = face::createLBPHFaceRecognizer();
@@ -51,14 +51,14 @@ void VisualContextAnnotator::loadCAFFEModel(const string modelBinPath, const str
 	importer.release();
 	classNames = readClassNames(synthWordPath);
 }
-void VisualContextAnnotator::detectWithCascadeClassifier(vector<Rect>& result, Mat & frame_gray)
+void VisualContextAnnotator::detectWithCascadeClassifier(vector<Rect>& result, Mat & frame_gray, Size minSize)
 {
-	cascade_classifier.detectMultiScale(frame_gray, result, 1.1, 3, 0, Size(50, 50), Size());
+	cascade_classifier.detectMultiScale(frame_gray, result, 1.1, 3, 0, minSize, Size());
 }
 
-void VisualContextAnnotator::detectTextMorphologicalGradient(vector<Rect>& result, Mat & frame_gray)
+void VisualContextAnnotator::detectTextWithMorphologicalGradient(vector<Rect>& result, Mat & frame_gray)
 {
-/**http://stackoverflow.com/questions/23506105/extracting-text-opencv**/
+	/**http://stackoverflow.com/questions/23506105/extracting-text-opencv**/
 
 	{
 		// morphological gradient
@@ -109,6 +109,39 @@ void VisualContextAnnotator::detectTextMorphologicalGradient(vector<Rect>& resul
 	}
 }
 
+void VisualContextAnnotator::detectObjectsWithCanny(vector<Rect>& result, Mat & frame_gray, double lowThreshold, Size minSize)
+{
+	Mat detected_edges;
+	/// Reduce noise with a kernel 3x3
+	blur(frame_gray, detected_edges, Size(3, 3));
+
+	/// Canny detector
+	Canny(frame_gray, detected_edges, lowThreshold, lowThreshold * 3, 3);
+	// connect horizontally oriented regions
+	vector<vector<Point>> contours;
+	vector<Vec4i> hierarchy;
+
+	findContours(detected_edges, contours, hierarchy, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_SIMPLE, Point(0, 0));
+
+
+	if (contours.size() == 0)
+	{
+		return;
+	}
+
+	for (auto cnt : contours)
+	{
+		double epsilon = 0.01*arcLength(cnt, true);
+		vector<Point> approx;
+		approxPolyDP(cnt, approx, epsilon, true);
+
+
+		Rect r = boundingRect(approx);
+		if (r.size().width >= minSize.width && r.size().height >= minSize.height)
+			result.push_back(r);
+	}
+}
+
 Annotation VisualContextAnnotator::predictWithLBPInRectangle(const Rect& detect, Mat& frame_gray)
 {
 	Mat face = frame_gray(detect);
@@ -142,7 +175,7 @@ struct PredictWithLBPBody {
 
 void VisualContextAnnotator::predictWithLBP(vector<Annotation>& annotations, cv::Mat& frame_gray)
 {
-	static tbb::affinity_partitioner affinity;
+	static tbb::affinity_partitioner affinityLBP;
 
 	vector<Rect> detects;
 	detectWithCascadeClassifier(detects, frame_gray);
@@ -154,28 +187,56 @@ void VisualContextAnnotator::predictWithLBP(vector<Annotation>& annotations, cv:
 	vector<Annotation> result(tsize);
 	tbb::parallel_for(tbb::blocked_range<int>(0, tsize), // Index space for loop
 		parallelLBP,                    // Body of loop
-		affinity);
+		affinityLBP);
+
+	annotations = vector<Annotation>(parallelLBP.result_, parallelLBP.result_ + tsize);
+}
+
+void VisualContextAnnotator::predictWithLBP(vector<Annotation>& annotations, vector<Rect> detects, cv::Mat & frame_gray)
+{
+	const int tsize = detects.size();
+	if (tsize <= 0)
+		return;
+	static tbb::affinity_partitioner affinityLBP2;
+	PredictWithLBPBody parallelLBP(*this, detects, frame_gray);
+
+	parallelLBP.result_ = new Annotation[tsize];
+	vector<Annotation> result(tsize);
+	tbb::parallel_for(tbb::blocked_range<int>(0, tsize), // Index space for loop
+		parallelLBP,                    // Body of loop
+		affinityLBP2);
 
 	annotations = vector<Annotation>(parallelLBP.result_, parallelLBP.result_ + tsize);
 }
 
 Annotation VisualContextAnnotator::predictWithCAFFEInRectangle(const Rect & detect, Mat & frame)
 {
-	Mat img;
-	resize(frame, img, Size(244, 244));
-	dnn::Blob inputBlob = dnn::Blob(img);   //Convert Mat to dnn::Blob image batch
+
+	
+	cv::Mat img;
+	img = Scalar::all(0);
+	
+	resize(frame(detect), img, Size(244, 244));
+
+	tbb::critical_section cs;
+
+	cs.lock();
+	dnn::Blob inputBlob;
+	dnn::Blob prob;
+	inputBlob = dnn::Blob(img);
+	//Convert Mat to dnn::Blob image batch
 	net.setBlob(".data", inputBlob);        //set the network input
 	net.forward();                          //compute output
-	dnn::Blob prob = net.getBlob("prob");   //gather output of "prob" layer
+	prob = net.getBlob("prob");
 	int classId;
 	double classProb;
 	getMaxClass(prob, &classId, &classProb);//find the best class
-
-											// Calculate the position for annotated text (make sure we don't
-											// put illegal values in there):
 	stringstream caffe_fmt = stringstream();
 	caffe_fmt << "Probability: " << classProb * 100 << "%" << std::endl;
 	caffe_fmt << "Best class: #" << classId << " '" << classNames.at(classId) << "'" << std::endl;
+	// critical section here
+	cs.unlock();
+
 	return Annotation(detect, caffe_fmt.str());
 }
 
@@ -192,7 +253,7 @@ struct PredictWithCAFFEBody {
 };
 void VisualContextAnnotator::predictWithCAFFE(vector<Annotation>& annotations, cv::Mat & frame, cv::Mat & frame_gray)
 {
-	static tbb::affinity_partitioner affinityDNN;
+	static tbb::affinity_partitioner affinityDNN2;
 	vector<Rect> detects;
 	detectWithCascadeClassifier(detects, frame_gray);
 	PredictWithCAFFEBody parallelDNN(*this, detects, frame);
@@ -203,7 +264,7 @@ void VisualContextAnnotator::predictWithCAFFE(vector<Annotation>& annotations, c
 	vector<Annotation> result(tsize);
 	tbb::parallel_for(tbb::blocked_range<int>(0, tsize), // Index space for loop
 		parallelDNN,                    // Body of loop
-		affinityDNN);
+		affinityDNN2);
 
 	annotations = vector<Annotation>(parallelDNN.result_, parallelDNN.result_ + tsize);
 }
