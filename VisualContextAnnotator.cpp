@@ -108,37 +108,52 @@ void VisualContextAnnotator::detectWithMorphologicalGradient(vector<Rect>& resul
 		}
 	}
 }
-
-void VisualContextAnnotator::detectObjectsWithCanny(vector<Rect>& result, Mat & frame_gray, double lowThreshold, Size minSize)
+void VisualContextAnnotator::detectObjectsWithCanny(vector<vector<Point>>& contours, Mat& frame_gray, double lowThreshold, Size minSize)
 {
 	Mat detected_edges;
 	/// Reduce noise with a kernel 3x3
-	blur(frame_gray, detected_edges, Size(3, 3));
+	//blur(frame_gray, detected_edges, Size(3, 3));
+	GaussianBlur(frame_gray, detected_edges, Size(3, 3), 1);
+	
 
 	/// Canny detector
-	Canny(frame_gray, detected_edges, lowThreshold, lowThreshold * 3, 3);
+	Canny(detected_edges, detected_edges, lowThreshold, lowThreshold * 3, 3);
+	Mat connected;
+	Mat morphKernel = getStructuringElement(MORPH_RECT, Size(3, 3));
+	morphologyEx(detected_edges, connected, MORPH_CLOSE, morphKernel);
 	// connect horizontally oriented regions
-	vector<vector<Point>> contours;
+	vector<vector<Point>> localContours;
 	vector<Vec4i> hierarchy;
+	findContours(connected, localContours, hierarchy, CV_RETR_CCOMP, CV_CHAIN_APPROX_SIMPLE, Point(0, 0));
 
-	findContours(detected_edges, contours, hierarchy, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_SIMPLE, Point(0, 0));
-
-
-	if (contours.size() == 0)
-	{
-		return;
-	}
-
-	for (auto cnt : contours)
+	for (auto cnt : localContours)
 	{
 		double epsilon = 0.01*arcLength(cnt, true);
 		vector<Point> approx;
-		approxPolyDP(cnt, approx, epsilon, true);
+		approxPolyDP(cnt, approx, epsilon, true); //only closed curves
+		if (approx.size() > 0)
+		{
+			Rect r = boundingRect(approx);
+			if (r.size().width >= minSize.width && r.size().height >= minSize.height)
+			{
+				contours.push_back(cnt);
+			}
+		}
 
+	}
+}
 
-		Rect r = boundingRect(approx);
-		if (r.size().width >= minSize.width && r.size().height >= minSize.height)
-			result.push_back(r);
+void VisualContextAnnotator::detectObjectsWithCanny(vector<Rect>& result, Mat & frame_gray, double lowThreshold, Size minSize)
+{
+
+	vector<vector<Point>> contours;
+	vector<Vec4i> hierarchy;
+	detectObjectsWithCanny(contours, frame_gray, lowThreshold, minSize);
+
+	for (auto cnt : contours)
+	{
+		Rect r = boundingRect(cnt);
+		result.push_back(r);
 	}
 }
 
